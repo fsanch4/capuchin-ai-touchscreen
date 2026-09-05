@@ -1,64 +1,85 @@
-import pygame
-import sys
+"""
+Touchscreen and reward-relay worker.
+"""
+
+import logging
 import time
-from datetime import datetime
-from gpiozero import LED
-from signal import pause
 
-# --- Constants ---
-TOUCHSCREEN_WIDTH = 800
-TOUCHSCREEN_HEIGHT = 480
+
+LOGGER = logging.getLogger(__name__)
 BLUE = (0, 0, 255)
-RELAY_DURATION = 0.5  # seconds
-RELAY_PIN = 17  # GPIO17 (BCM)
-
-# --- GPIO Setup (gpiozero) ---
-relay = LED(RELAY_PIN)
-relay.on()  # Make sure it's off initially (I know it says 'on' here, but that's because of some wiring quirks)
-
-# --- Pygame Setup ---
-pygame.init()
-screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-pygame.display.set_caption("Touchscreen Reward System")
-screen.fill(BLUE)
-pygame.display.update()
 
 
-def trigger_reward():
-    print(f"[{datetime.now().isoformat()}] ✅ Triggering reward...")
-    relay.off()
-    time.sleep(RELAY_DURATION)
+def trigger_reward(relay, stop_event, duration: float) -> None:
+    LOGGER.info("Triggering reward")
     relay.on()
-    print(f"[{datetime.now().isoformat()}] ✅ Reward delivered.")
+    try:
+        stop_event.wait(duration)
+    finally:
+        relay.off()
+    LOGGER.info("Reward delivered")
 
 
-print("🟦 Touchscreen reward interface is now running.")
-print("Touch to trigger reward. ESC or close to exit.")
+def run_reward_interface(
+    stop_event,
+    last_detection,
+    *,
+    detection_timeout: float = 10.0,
+    relay_pin: int = 17,
+    relay_duration: float = 0.5,
+) -> None:
+    # Hardware and display initialization must happen inside this child process,
+    # never at module import time.
+    import pygame
+    from gpiozero import OutputDevice
 
-try:
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                raise KeyboardInterrupt
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    raise KeyboardInterrupt
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                try:
-                    with open("/tmp/last_detection.txt", "r") as f:
-                        last_detection_time = float(f.read())
-                    if time.time() - last_detection_time <= 10:
-                        trigger_reward()
+    relay = OutputDevice(
+        relay_pin,
+        active_high=False,
+        initial_value=False,
+    )
+
+    try:
+        pygame.init()
+        screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        pygame.display.set_caption("Touchscreen Reward System")
+        screen.fill(BLUE)
+        pygame.display.flip()
+        clock = pygame.time.Clock()
+
+        LOGGER.info("Touchscreen reward interface is running")
+
+        while not stop_event.is_set():
+            for event in pygame.event.get():
+                if stop_event.is_set():
+                    break
+
+                if event.type == pygame.QUIT or (
+                    event.type == pygame.KEYDOWN
+                    and event.key == pygame.K_ESCAPE
+                ):
+                    stop_event.set()
+                    break
+
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    with last_detection.get_lock():
+                        detected_at = last_detection.value
+
+                    detection_is_recent = (
+                        detected_at > 0
+                        and time.monotonic() - detected_at
+                        <= detection_timeout
+                    )
+                    if detection_is_recent:
+                        trigger_reward(relay, stop_event, relay_duration)
                     else:
-                        print("[INFO] Touch occurred, but no recent detection.")
-                except FileNotFoundError:
-                    print("[INFO] Detection log not found — no reward triggered.")
+                        LOGGER.info(
+                            "Touch ignored: no detection in the last %.1f seconds",
+                            detection_timeout,
+                        )
 
-        time.sleep(0.01)
-
-except KeyboardInterrupt:
-    print("\n[INFO] Exiting program.")
-
-finally:
-    relay.on()
-    pygame.quit()
+            clock.tick(60)
+    finally:
+        relay.off()
+        relay.close()
+        pygame.quit()

@@ -38,18 +38,23 @@ model using the following command.
 pip install -r yolo_requirements.txt
 ```
 
-TODO: check if gpiozero, lgpio, and pygame are pre-installed even in the conda
-environment. If not, add install instruction here.
-
 ## Run CapuchinAI
 
 To run CapuchinAI, first download your trained model weights on the Raspberry Pi.
 Place them in this directory and name the file `best.pt`.
 With the conda environment activated, run
 ```
-python run_capuchinai.py
+python capuchin_recorder_headless.py & PID1=$!
 ```
-The touchscreen interface as well as live recording should start up.
+This should start recording in the background.
+At the same time, we run the GPIO reward script using the system Python
+distribution.
+```
+sudo /usr/bin/python3 touchscreen_reward_interface.py
+```
 
-Ctrl-C quits all processes at any time.
+When finished, kill the YOLO process if it is still running.
+```
+kill $PID1
+```
 
