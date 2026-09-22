@@ -7,51 +7,18 @@ YOLO detection and video-recording worker.
 import csv
 import logging
 import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
 
 LOGGER = logging.getLogger(__name__)
 
-
-class _RealtimeVideoWriter:
-    """Resample live frames onto a fixed-FPS timeline, holding the last frame.
-
-    Timestamps are monotonic camera-read completion times, not inference times.
-    This preserves elapsed time but cannot recover frames missed during inference
-    or compensate for frames already buffered by the camera backend.
-    """
-
-    def __init__(self, writer, fps: float) -> None:
-        self.writer = writer
-        self.fps = fps
-        self.start_time = None
-        self.last_frame = None
-        self.frame_count = 0
-
-    def _fill_until(self, timestamp: float) -> None:
-        if self.start_time is None:
-            return
-        elapsed = timestamp - self.start_time
-        while self.frame_count / self.fps < elapsed:
-            self.writer.write(self.last_frame)
-            self.frame_count += 1
-
-    def write(self, frame, captured_at: float) -> None:
-        if self.start_time is None:
-            self.start_time = captured_at
-            self.writer.write(frame)
-            self.frame_count = 1
-        else:
-            # Fill earlier playback slots with the earlier frame, not this one.
-            self._fill_until(captured_at)
-        self.last_frame = frame
-
-    def release(self, stopped_at: float) -> None:
-        try:
-            self._fill_until(stopped_at)
-        finally:
-            self.writer.release()
+def estimate_fps(sample_times: deque[float]) -> float:
+    if len(sample_times) < 2:
+        return 30.0
+    elapsed = sample_times[-1] - sample_times[0]
+    return (len(sample_times) - 1) / elapsed if elapsed > 0 else 30.0
 
 
 def run_recorder(
@@ -64,10 +31,7 @@ def run_recorder(
     conf_thres: float = 0.5,
     detection_timeout: float = 10.0,
     record_dir: str = "recordings",
-    record_fps: float = 30.0,
 ) -> None:
-    if record_fps <= 0:
-        raise ValueError("record_fps must be finite and positive")
     # Heavy/native dependencies are imported only inside the recorder child.
     import cv2
     import torch
@@ -95,6 +59,7 @@ def run_recorder(
 
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    sample_times: deque[float] = deque(maxlen=30)
 
     out = None
     filename: str | None = None
@@ -115,17 +80,9 @@ def run_recorder(
                 if out is None:
                     return
 
-                stopped_at = time.monotonic()
-                recording_end_time = datetime.now().isoformat()
-                out.release(stopped_at)
-                LOGGER.info(
-                    "Recording timing: %.3fs elapsed, %.3fs playback (%d frames at %.2f FPS)",
-                    stopped_at - out.start_time if out.start_time is not None else 0.0,
-                    out.frame_count / record_fps,
-                    out.frame_count,
-                    record_fps,
-                )
+                out.release()
                 out = None
+                recording_end_time = datetime.now().isoformat()
                 csv_writer.writerow(
                     [filename, recording_start_time, recording_end_time]
                 )
@@ -136,13 +93,13 @@ def run_recorder(
 
             try:
                 while not stop_event.is_set():
+                    sample_time = time.monotonic()
                     ok, frame = cap.read()
-                    captured_at = time.monotonic()
-                    captured_wall_time = datetime.now().isoformat()
                     if not ok:
                         LOGGER.warning("Video source stopped producing frames")
                         break
 
+                    sample_times.append(sample_time)
                     results = model(frame, size=img_size)
                     has_detection = len(results.xyxy[0]) > 0
                     now = time.monotonic()
@@ -158,23 +115,23 @@ def run_recorder(
                             )
                             filename = f"capuchin_{timestamp}.mp4"
                             output_path = output_dir / filename
-                            writer = cv2.VideoWriter(
+                            out = cv2.VideoWriter(
                                 str(output_path),
                                 cv2.VideoWriter_fourcc(*"mp4v"),
-                                record_fps,
+                                estimate_fps(sample_times),
                                 (frame_width, frame_height),
                             )
-                            if not writer.isOpened():
-                                writer.release()
+                            if not out.isOpened():
+                                out.release()
+                                out = None
                                 raise RuntimeError(
                                     f"Failed to open video writer for {output_path}"
                                 )
-                            out = _RealtimeVideoWriter(writer, record_fps)
-                            recording_start_time = captured_wall_time
+                            recording_start_time = datetime.now().isoformat()
                             LOGGER.info("Started recording: %s", filename)
 
                     if out is not None:
-                        out.write(frame, captured_at)
+                        out.write(frame)
 
                     if (
                         out is not None
