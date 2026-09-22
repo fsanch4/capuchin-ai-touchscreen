@@ -1,3 +1,6 @@
 .DS_store
 Gemfile.lock
 API_key
+rpi/recordings
+rpi/old_version/recordings
+rpi/__pycache__
