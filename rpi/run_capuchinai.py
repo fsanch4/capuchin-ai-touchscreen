@@ -9,6 +9,8 @@ import signal
 import time
 from pathlib import Path
 
+from cognitive_tests import TEST_TYPES
+
 
 APP_DIR = Path(__file__).resolve().parent
 LOGGER = logging.getLogger(__name__)
@@ -60,7 +62,26 @@ def parse_args() -> argparse.Namespace:
         default=str(APP_DIR / "recordings"),
     )
     parser.add_argument("--relay-pin", type=int, default=17)
-    parser.add_argument("--relay-duration", type=float, default=0.5)
+    parser.add_argument(
+        "--test", choices=tuple(TEST_TYPES), default="blue",
+        help="Cognitive task (default: blue)",
+    )
+    parser.add_argument(
+        "--target-size", nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
+        help="Target size in pixels for reduced/moving tests",
+    )
+    parser.add_argument(
+        "--relay-duration", type=float,
+        help="Override the test's relay pulse duration in seconds",
+    )
+    parser.add_argument(
+        "--cooldown", type=float,
+        help="Override cooldown in seconds, measured from motor shutdown",
+    )
+    parser.add_argument(
+        "--flash-duration", type=float,
+        help="Override success flash in seconds (0 disables it)",
+    )
     return parser.parse_args()
 
 
@@ -104,6 +125,10 @@ def main() -> int:
                 "detection_timeout": args.detection_timeout,
                 "relay_pin": args.relay_pin,
                 "relay_duration": args.relay_duration,
+                "test_name": args.test,
+                "target_size": tuple(args.target_size) if args.target_size else None,
+                "cooldown_duration": args.cooldown,
+                "flash_duration": args.flash_duration,
             },
         ),
     )
