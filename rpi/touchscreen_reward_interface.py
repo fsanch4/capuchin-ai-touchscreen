@@ -1,5 +1,8 @@
 """
 Touchscreen and reward-relay worker.
+
+Keyboard: 1 = blue screen, 2 = reduced target, 3 = moving target.
+Switches start a fresh test after any reward/flash, preserving the cooldown.
 """
 
 
@@ -13,6 +16,7 @@ from cognitive_tests import TestSettings, make_test
 
 LOGGER = logging.getLogger(__name__)
 WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
 
 
 class RewardCycle:
@@ -103,8 +107,18 @@ def run_reward_interface(
         relay = OutputDevice(relay_pin, active_high=False, initial_value=False)
         cycle = RewardCycle(relay, test, settings)
         accept_touches = True
+        pending_test_name = None
+        test_keys = {
+            pygame.K_1: "blue",
+            pygame.K_2: "reduced",
+            pygame.K_3: "moving",
+            pygame.K_KP1: "blue",
+            pygame.K_KP2: "reduced",
+            pygame.K_KP3: "moving",
+        }
 
         LOGGER.info("Cognitive test %s is running: %s", test_name, settings)
+        LOGGER.info("Switch tests with 1=blue, 2=reduced, 3=moving; Esc quits")
 
         while not stop_event.is_set():
             for event in pygame.event.get():
@@ -117,6 +131,16 @@ def run_reward_interface(
                 ):
                     stop_event.set()
                     break
+
+                if event.type == pygame.KEYDOWN and event.key in test_keys:
+                    selected = test_keys[event.key]
+                    # Selecting the current test cancels a pending switch.
+                    # Repeated presses must not reset an already active trial.
+                    pending_test_name = selected if selected != test_name else None
+                    # Ignore touches from this batch: they refer to the screen
+                    # displayed before the requested change.
+                    accept_touches = False
+                    continue
 
                 # Use the existing touchscreen-as-mouse path only; also handling
                 # FINGERDOWN can double-count a touch on SDL touchscreens.
@@ -147,10 +171,33 @@ def run_reward_interface(
             # touch queued during feedback/cooldown cannot answer the new trial.
             now = time.monotonic()
             cycle.update(now)
+            if pending_test_name is not None and cycle.phase == "ready":
+                try:
+                    next_test = make_test(
+                        pending_test_name,
+                        target_size if pending_test_name != "blue" else None,
+                    )
+                    next_test.start(screen.get_size())
+                except ValueError as error:
+                    # For example, the requested target may not fit this display.
+                    LOGGER.warning("Cannot switch to %s: %s", pending_test_name, error)
+                else:
+                    test = next_test
+                    test_name = pending_test_name
+                    settings = replace(test.settings, **overrides)
+                    # Keep the same cycle so switching cannot erase a cooldown.
+                    cycle.test = test
+                    cycle.settings = settings
+                    pygame.display.set_caption(f"CapuchinAI: {test_name}")
+                    LOGGER.info("Switched cognitive test to %s: %s", test_name, settings)
+                pending_test_name = None
+
             if cycle.phase == "ready":
                 test.update(now)
             if cycle.phase == "feedback":
                 screen.fill(WHITE)
+            elif now < cycle.cooldown_until:
+                screen.fill(BLACK)
             else:
                 test.draw(screen)
             pygame.display.flip()
