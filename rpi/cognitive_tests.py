@@ -59,7 +59,7 @@ class BlueScreenTest(CognitiveTest):
 
 
 class ReducedTargetTest(CognitiveTest):
-    settings = TestSettings(relay_duration=0.4, cooldown_duration=4.0)
+    settings = TestSettings(relay_duration=0.4, cooldown_duration=2.0)
 
     def __init__(self, target_size: tuple[int, int] = (300, 300)) -> None:
         self.target_size = target_size
@@ -91,7 +91,7 @@ class MovingTargetTest(ReducedTargetTest):
     """Choose a random position initially and after each completed reward."""
 
     settings = TestSettings(
-        relay_duration=0.5, cooldown_duration=4.0, flash_duration=0.5
+        relay_duration=0.5, cooldown_duration=2.0, flash_duration=0.0
     )
 
     def __init__(self, target_size: tuple[int, int] = (250, 250)) -> None:
