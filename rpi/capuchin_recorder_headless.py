@@ -64,7 +64,7 @@ def run_recorder(
     conf_thres: float = 0.5,
     detection_timeout: float = 10.0,
     record_dir: str = "recordings",
-    record_fps: float = 30.0,
+    record_fps: float = 15.0,
 ) -> None:
     if record_fps <= 0:
         raise ValueError("record_fps must be finite and positive")

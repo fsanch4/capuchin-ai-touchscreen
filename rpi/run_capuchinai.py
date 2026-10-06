@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weights", default=str(APP_DIR / "best.pt"))
     parser.add_argument("--source", default="0")
     parser.add_argument("--img", type=int, default=416)
-    parser.add_argument("--conf", type=float, default=0.5)
+    parser.add_argument("--conf", type=float, default=0.3)
     parser.add_argument("--detection-timeout", type=float, default=10.0)
     parser.add_argument(
         "--record-dir",
@@ -76,6 +76,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--cooldown", type=float,
+        default=2.0,
         help="Override cooldown in seconds, measured from motor shutdown",
     )
     parser.add_argument(
@@ -122,7 +123,9 @@ def main() -> int:
             stop_event,
             last_detection,
             {
-                "detection_timeout": args.detection_timeout,
+                # "detection_timeout": args.detection_timeout,
+                ### TEST: setting detection_timeout to a large number
+                "detection_timeout": 10000.0,
                 "relay_pin": args.relay_pin,
                 "relay_duration": args.relay_duration,
                 "test_name": args.test,
