@@ -3,6 +3,8 @@ Touchscreen and reward-relay worker.
 
 Keyboard: 1 = blue screen, 2 = reduced target, 3 = moving target.
 Switches start a fresh test after any reward/flash, preserving the cooldown.
+Right-click requests a black, inactive screen after the current reward/flash.
+Right-click again to resume.
 """
 
 
@@ -108,6 +110,7 @@ def run_reward_interface(
         cycle = RewardCycle(relay, test, settings)
         accept_touches = True
         pending_test_name = None
+        pause_requested = False
         test_keys = {
             pygame.K_1: "blue",
             pygame.K_2: "reduced",
@@ -119,6 +122,7 @@ def run_reward_interface(
 
         LOGGER.info("Cognitive test %s is running: %s", test_name, settings)
         LOGGER.info("Switch tests with 1=blue, 2=reduced, 3=moving; Esc quits")
+        LOGGER.info("Right-click pauses/resumes the touchscreen and rewards")
 
         while not stop_event.is_set():
             for event in pygame.event.get():
@@ -131,6 +135,24 @@ def run_reward_interface(
                 ):
                     stop_event.set()
                     break
+
+                # Handle this before ignoring paused input, so another right-click
+                # can always resume. Keep processing Esc/QUIT above as well.
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+                    pause_requested = not pause_requested
+                    accept_touches = False
+                    if pause_requested:
+                        pending_test_name = None
+                    suffix = " (pause requested)" if pause_requested else ""
+                    pygame.display.set_caption(f"CapuchinAI: {test_name}{suffix}")
+                    LOGGER.info(
+                        "Pause requested; finishing any active reward/flash"
+                        if pause_requested else "Touchscreen resumed"
+                    )
+                    continue
+
+                if pause_requested:
+                    continue
 
                 if event.type == pygame.KEYDOWN and event.key in test_keys:
                     selected = test_keys[event.key]
@@ -171,6 +193,15 @@ def run_reward_interface(
             # touch queued during feedback/cooldown cannot answer the new trial.
             now = time.monotonic()
             cycle.update(now)
+            # Keep servicing the current pulse/flash until it finishes. Once
+            # paused, continue polling events but do not update or draw the test.
+            if pause_requested and cycle.phase == "ready":
+                screen.fill(BLACK)
+                pygame.display.set_caption(f"CapuchinAI: {test_name} (paused)")
+                pygame.display.flip()
+                clock.tick(60)
+                continue
+
             if pending_test_name is not None and cycle.phase == "ready":
                 try:
                     next_test = make_test(
@@ -201,7 +232,7 @@ def run_reward_interface(
             else:
                 test.draw(screen)
             pygame.display.flip()
-            accept_touches = cycle.ready(now)
+            accept_touches = not pause_requested and cycle.ready(now)
             clock.tick(60)
     finally:
         try:
